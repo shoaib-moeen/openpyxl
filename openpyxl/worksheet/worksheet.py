@@ -30,6 +30,8 @@ from openpyxl.workbook.defined_name import (
 )
 
 from openpyxl.formula.translate import Translator
+from openpyxl.formula.tokenizer import Tokenizer
+from openpyxl.utils.dataframe import worksheet_to_dataframe
 
 from .datavalidation import DataValidationList
 from .page import (
@@ -145,6 +147,7 @@ class Worksheet(_WorkbookChild):
         self.sheet_format = SheetFormatProperties()
         self.scenarios = ScenarioList()
         self.controls = ControlList()
+        self.dataframe = None
 
 
     @property
@@ -176,7 +179,6 @@ class Worksheet(_WorkbookChild):
     @property
     def show_gridlines(self):
         return self.sheet_view.showGridLines
-
 
     @property
     def freeze_panes(self):
@@ -218,6 +220,11 @@ class Worksheet(_WorkbookChild):
             sel.insert(0, Selection(pane="topRight", activeCell=None, sqref=None))
             sel.insert(1, Selection(pane="bottomLeft", activeCell=None, sqref=None))
             view.selection = sel
+
+    def adjust_sheet(self, sheet_name, idx, amount):
+        for cell in self._cells.values():
+            if cell.data_type == "f":
+                tokens = Tokenizer(cell.value)
 
 
     def cell(self, row, column, value=None):
@@ -692,8 +699,7 @@ class Worksheet(_WorkbookChild):
 
         self._current_row = row_idx
 
-
-    def _move_cells(self, min_row=None, min_col=None, offset=0, row_or_col="row"):
+    def _move_cells(self, min_row=None, min_col=None, offset=0, row_or_col="row", translate=False):
         """
         Move either rows or columns around by the offset
         """
@@ -718,32 +724,32 @@ class Worksheet(_WorkbookChild):
             elif min_col and column < min_col:
                 continue
 
-            self._move_cell(row, column, row_offset, col_offset)
+            self._move_cell(row, column, row_offset, col_offset, translate=translate)
 
 
-    def insert_rows(self, idx, amount=1):
+    def insert_rows(self, idx, amount=1, translate=False):
         """
         Insert row or rows before row==idx
         """
-        self._move_cells(min_row=idx, offset=amount, row_or_col="row")
+        self._move_cells(min_row=idx, offset=amount, row_or_col="row", translate=translate)
         self._current_row = self.max_row
 
 
-    def insert_cols(self, idx, amount=1):
+    def insert_cols(self, idx, amount=1, translate=False):
         """
         Insert column or columns before col==idx
         """
-        self._move_cells(min_col=idx, offset=amount, row_or_col="column")
+        self._move_cells(min_col=idx, offset=amount, row_or_col="column", translate=translate)
 
 
-    def delete_rows(self, idx, amount=1):
+    def delete_rows(self, idx, amount=1, translate=False, adjust=False):
         """
         Delete row or rows from row==idx
         """
 
         remainder = _gutter(idx, amount, self.max_row)
 
-        self._move_cells(min_row=idx+amount, offset=-amount, row_or_col="row")
+        self._move_cells(min_row=idx+amount, offset=-amount, row_or_col="row", translate=translate)
 
         # calculating min and max col is an expensive operation, do it only once
         min_col = self.min_column
@@ -757,14 +763,14 @@ class Worksheet(_WorkbookChild):
             self._current_row = 0
 
 
-    def delete_cols(self, idx, amount=1):
+    def delete_cols(self, idx, amount=1, translate=False, adjust=False):
         """
         Delete column or columns from col==idx
         """
 
         remainder = _gutter(idx, amount, self.max_column)
 
-        self._move_cells(min_col=idx+amount, offset=-amount, row_or_col="column")
+        self._move_cells(min_col=idx+amount, offset=-amount, row_or_col="column", translate=translate)
 
         # calculating min and max row is an expensive operation, do it only once
         min_row = self.min_row
@@ -773,6 +779,10 @@ class Worksheet(_WorkbookChild):
             for row in range(min_row, max_row):
                 if (row, col) in self._cells:
                     del self._cells[row, col]
+        #remove the idx to idx+amount columns in the self.dataframe
+        self.dataframe = self.dataframe.drop(columns=range(idx-1, idx-1+amount))
+        if adjust:
+            self.adjust_dataframe(idx, amount)
 
 
     def move_range(self, cell_range, rows=0, cols=0, translate=False):
@@ -839,6 +849,9 @@ class Worksheet(_WorkbookChild):
 
         return RowDimension(self)
 
+    def load_dataframe(self):
+        self.dataframe = worksheet_to_dataframe(self)
+
 
     @property
     def print_title_rows(self):
@@ -902,6 +915,21 @@ class Worksheet(_WorkbookChild):
             self._print_area = PrintArea.from_string(value)
         elif hasattr(value, "__iter__"):
             self._print_area = PrintArea.from_string(",".join(value))
+
+    def adjust_dataframe(self, idx, offset):
+        # traverse dataframe and edit formulas using openpyxl translate. keep in mind that values are not Cell instances they are simplae string values
+        row_idx = 0
+        for row in self.dataframe.iterrows():
+            col = 0
+            for value in row:
+                print(f'{get_column_letter(col+1)}{row_idx+1}')
+                t = Translator(value, f'{get_column_letter(col+1)}{row_idx+1}')
+                self.dataframe.at[row[0], col] = t.translate_formula(col_delta=offset)
+                #use translate_formula to apply changes to formula according to row and col
+                col += 1
+            row_idx += 1
+
+            
 
 
 def _gutter(idx, offset, max_val):

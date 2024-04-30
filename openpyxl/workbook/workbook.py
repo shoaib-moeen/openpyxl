@@ -88,7 +88,6 @@ class Workbook(object):
         self.rels = RelationshipList()
         self.calculation = CalcProperties()
         self.views = [BookView()]
-        self._volatile_deps = None
 
 
     def _setup_styles(self):
