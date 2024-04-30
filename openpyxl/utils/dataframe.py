@@ -85,3 +85,23 @@ def expand_index(index, header=False):
         result = numpy.array(result).transpose().tolist()
         for row in result:
             yield row
+
+
+#write a function to convert worksheet object into a pandas dataframe
+def worksheet_to_dataframe(ws, range_string=None, index=False, header=False):
+    """
+    Convert a worksheet into a Pandas dataframe.
+    """
+    from pandas import DataFrame
+
+    rows = []
+    for row in ws.iter_rows(values_only=True):
+        rows.append(row)
+    df = DataFrame(rows)
+    if index:
+        df.set_index(df.index[0], inplace=True)
+    if header:
+        df.columns = df.iloc[0]
+        df = df.drop(df.index[0])
+    print('returning dataframe')
+    return df
